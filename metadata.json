@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix HCM Lite",
+  "description": "Modern Human Capital Management system with role-based dashboards, employee onboarding, company policy configuration, and audit logging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

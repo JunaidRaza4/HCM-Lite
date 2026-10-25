@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-app: #F7F8FA;
+    --bg-card: #FFFFFF;
+    --border-subtle: #E5E7EB;
+    --text-heading: #0F172A;
+    --text-body: #475569;
+    --primary: #4F46E5;
+    --success: #16A34A;
+    --warning: #D97706;
+    --danger: #DC2626;
+  }
+
+  body {
+    background-color: #F7F8FA;
+    color: #475569;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html.dark body {
+    background-color: #0B0F19;
+    color: #94A3B8;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    color: #0F172A;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  html.dark h1,
+  html.dark h2,
+  html.dark h3,
+  html.dark h4,
+  html.dark h5,
+  html.dark h6 {
+    color: #F8FAFC;
+  }
+
+  /* Professional data tabular display */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
