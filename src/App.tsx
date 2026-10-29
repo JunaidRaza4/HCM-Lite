@@ -31,7 +31,7 @@ const MainApp: React.FC = () => {
         onSetupSuccess={(adminEmail) => {
           setSetupNotice({
             email: adminEmail,
-            message: 'Setup complete! Please sign in with your administrator account.',
+            message: 'Setup complete! Login with your admin account.',
           });
         }}
       />

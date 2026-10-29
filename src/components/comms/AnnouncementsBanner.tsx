@@ -91,8 +91,8 @@ export const AnnouncementsBanner: React.FC = () => {
 
       {/* Announcements List */}
       {announcements.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 text-center shadow-xs">
-          No company announcements yet. Click "+ Post Announcement" above.
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 text-center shadow-xs">
+          No announcements yet
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

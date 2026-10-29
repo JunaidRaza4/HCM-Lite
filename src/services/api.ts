@@ -39,6 +39,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   if (!response.ok) {
     const error: any = new Error(data.error || `HTTP error ${response.status}`);
     error.status = response.status;
+    if (response.status === 401) {
+      clearStoredToken();
+    }
     throw error;
   }
 
@@ -47,24 +50,101 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // Setup
-  getSetupStatus: () => request<{ initialized: boolean }>('/api/setup/status'),
-  initializeSetup: (data: {
+  getSetupStatus: () => request<{ needsSetup: boolean; initialized: boolean }>('/api/setup/status'),
+  submitSetup: (data: {
     companyName: string;
-    officeStart: string;
-    gracePeriodMins: number;
-    weekendDays: string;
     adminName: string;
     adminEmail: string;
     adminPassword: string;
-  }) => request<{ success: boolean; message: string }>('/api/setup/initialize', {
+    officeStart?: string;
+    gracePeriodMins?: number;
+    weekendDays?: string;
+    officeLat?: number;
+    officeLng?: number;
+    officeRadius?: number;
+    securityQuestion?: string;
+    securityAnswer?: string;
+  }) => request<{
+    success: boolean;
+    message: string;
+    adminEmail?: string;
+    token?: string;
+    user?: User;
+    company?: Company;
+    companyId?: number;
+  }>('/api/setup', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  submitStep2Team: (data: {
+    companyId: number;
+    departmentName?: string;
+    hrName?: string;
+    hrEmail?: string;
+    hrPassword?: string;
+    hrRole?: 'hr' | 'employee';
+    employeeCode?: string;
+    designation?: string;
+    basicSalary?: number;
+  }) => request<{
+    success: boolean;
+    message: string;
+    departmentId?: number;
+    employeeId?: number;
+  }>('/api/setup/step2-team', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  initializeSetup: (data: {
+    companyName: string;
+    adminName: string;
+    adminEmail: string;
+    adminPassword: string;
+    officeStart?: string;
+    gracePeriodMins?: number;
+    weekendDays?: string;
+    officeLat?: number;
+    officeLng?: number;
+    officeRadius?: number;
+    securityQuestion?: string;
+    securityAnswer?: string;
+  }) => request<{
+    success: boolean;
+    message: string;
+    adminEmail?: string;
+    token?: string;
+    user?: User;
+    company?: Company;
+    companyId?: number;
+  }>('/api/setup', {
     method: 'POST',
     body: JSON.stringify(data),
   }),
 
   // Auth
+  checkEmail: (email: string) => request<{ exists: boolean; email: string; name?: string; role?: string; companyId?: number }>('/api/auth/check-email', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  }),
   login: (email: string, password: string) => request<{ token: string; user: User; company: Company }>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
+  }),
+  forgotPassword: (identifier: string) => request<{ success: boolean; message: string; email: string; name: string; role: string; temporaryPassword: string }>('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ identifier }),
+  }),
+  getSecurityQuestion: (identifier: string) => request<{ success: boolean; question: string; email: string; name: string }>('/api/auth/forgot-password/question', {
+    method: 'POST',
+    body: JSON.stringify({ identifier }),
+  }),
+  verifySecurityAnswerAndReset: (data: {
+    identifier: string;
+    security_answer: string;
+    new_password: string;
+  }) => request<{ success: boolean; message: string; email: string; temporaryPassword?: string }>('/api/auth/forgot-password/verify-and-reset', {
+    method: 'POST',
+    body: JSON.stringify(data),
   }),
   getMe: () => request<{ user: User; company: Company }>('/api/auth/me'),
   changePassword: (data: { currentPassword?: string; newPassword: string }) => request<{ success: boolean; token: string; message: string }>('/api/auth/change-password', {
@@ -78,6 +158,11 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
+  updateOfficeLocation: (data: { office_lat: number; office_lng: number; office_radius: number }) =>
+    request<{ success: boolean; message: string; company: Company }>('/api/settings/location', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
 
   // Departments
   getDepartments: () => request<Department[]>('/api/departments'),
@@ -141,12 +226,47 @@ export const api = {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
+  getEmployee360: (id: number) => request<{
+    employee: Employee;
+    attendance_summary: {
+      total_days: number;
+      present: number;
+      late: number;
+      half_day: number;
+      absent: number;
+      missing_checkout: number;
+    };
+    recent_attendance: any[];
+    leave_balances: LeaveBalance[];
+    recent_leaves: LeaveRequest[];
+    recent_payslips: any[];
+    audit_history: any[];
+  }>(`/api/employees/${id}/360`),
+  importEmployeesCsv: (data: { csvText?: string; rows?: any[]; dry_run?: boolean }) => request<{
+    success?: boolean;
+    dry_run?: boolean;
+    total_rows?: number;
+    valid_count: number;
+    error_count: number;
+    errors?: Array<{ row: number; code?: string; name?: string; email?: string; reason: string }>;
+    preview?: any[];
+    imported_count?: number;
+    credentials_created?: Array<{ code: string; name: string; email: string; tempPassword: string }>;
+    message?: string;
+  }>('/api/employees/import/csv', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  exportEmployeesCsvUrl: () => {
+    return '/api/employees/export/csv';
+  },
 
   // Leaves
   getLeaves: (employeeId?: number) => {
     const qs = employeeId ? `?employee_id=${employeeId}` : '';
     return request<{ requests: LeaveRequest[]; balances?: LeaveBalance[] }>(`/api/leaves${qs}`);
   },
+  getMyLeaveBalances: () => request<LeaveBalance[]>('/api/leave/my-balance'),
   submitLeave: (data: {
     leave_type_id: number;
     start_date: string;
@@ -158,9 +278,12 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(data),
   }),
-  updateLeaveStatus: (id: number, status: 'approved' | 'rejected' | 'pending') => request<LeaveRequest>(`/api/leaves/${id}/status`, {
+  cancelLeave: (id: number) => request<{ success: boolean; message: string; leave: LeaveRequest }>(`/api/leaves/${id}/cancel`, {
+    method: 'POST',
+  }),
+  updateLeaveStatus: (id: number, status: 'approved' | 'rejected' | 'pending', comment?: string) => request<LeaveRequest>(`/api/leaves/${id}/status`, {
     method: 'PUT',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, comment }),
   }),
 
   // Audit Logs
@@ -178,6 +301,9 @@ export const api = {
     source?: 'web' | 'camera';
     faceDescriptor?: number[];
     location?: { lat: number; lng: number; accuracy: number };
+    lat?: number;
+    lng?: number;
+    accuracy?: number;
   }) => request<{
     success: boolean;
     message: string;
@@ -193,14 +319,22 @@ export const api = {
     source?: 'web' | 'camera';
     faceDescriptor?: number[];
     location?: { lat: number; lng: number; accuracy: number };
-  }) => request<{ success: boolean; message: string; attendance: AttendanceRecord }>('/api/attendance/check-out', {
+    lat?: number;
+    lng?: number;
+    accuracy?: number;
+  }) => request<{ success: boolean; message: string; attendance: AttendanceRecord; distanceMeters?: number }>('/api/attendance/check-out', {
     method: 'POST',
     body: data ? JSON.stringify(data) : undefined,
   }),
   getTodayAttendance: () => request<{ date: string; checkedIn: boolean; checkedOut: boolean; record: AttendanceRecord | null }>('/api/attendance/today'),
+  getMyTodayAttendance: () => request<{ date: string; checkedIn: boolean; checkedOut: boolean; record: AttendanceRecord | null }>('/api/attendance/my-today'),
   getMyMonthlyAttendance: (month?: string) => {
     const qs = month ? `?month=${month}` : '';
     return request<{ month: string; summary: any; days: AttendanceCalendarDay[] }>(`/api/attendance/my-monthly${qs}`);
+  },
+  getMyMonthAttendance: (month?: string) => {
+    const qs = month ? `?month=${month}` : '';
+    return request<{ month: string; summary: any; days: AttendanceCalendarDay[] }>(`/api/attendance/my-month${qs}`);
   },
   getDailyBoard: (date?: string, departmentId?: number | string) => {
     const sp = new URLSearchParams();
@@ -223,16 +357,35 @@ export const api = {
     body: JSON.stringify({ status }),
   }),
 
-  // Payroll Lite (M6)
-  createPayrollDraft: (month: string) => request<{ run: PayrollRun; payslips: Payslip[] }>('/api/payroll/draft', {
+  // Payroll
+  createPayrollDraft: (month: string) => request<{ run: PayrollRun; payslips: Payslip[] }>('/api/payroll/create-draft', {
     method: 'POST',
     body: JSON.stringify({ month }),
   }),
   getPayrollRuns: () => request<PayrollRun[]>('/api/payroll/runs'),
-  getPayrollRunDetails: (id: number) => request<{ run: PayrollRun; payslips: Payslip[] }>(`/api/payroll/runs/${id}`),
-  finalizePayrollRun: (id: number) => request<{ success: boolean; message: string; run: PayrollRun }>(`/api/payroll/runs/${id}/finalize`, {
+  getPayrollRunDetails: (id: number) => request<{ run: PayrollRun; payslips: Payslip[] }>(`/api/payroll/${id}/payslips`),
+  finalizePayrollRun: (id: number) => request<{ success: boolean; message: string; run: PayrollRun }>(`/api/payroll/${id}/finalize`, {
     method: 'POST',
   }),
+  downloadPayslipPdf: async (runId: number, employeeId: number, filename?: string) => {
+    const token = getStoredToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(`/api/payroll/${runId}/payslip/${employeeId}/pdf`, { headers });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `Failed to download payslip (HTTP ${response.status})`);
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || `Payslip_${employeeId}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
   getMyPayslips: () => request<Payslip[]>('/api/payroll/my-payslips'),
   getPayslip: (id: number) => request<Payslip>(`/api/payroll/payslips/${id}`),
 
@@ -282,4 +435,42 @@ export const api = {
     body: JSON.stringify({ message }),
   }),
   getAiLogs: () => request<any[]>('/api/ai/logs'),
+
+  // User & HR Logins Management (Admin only)
+  getUsers: () => request<Array<{
+    id: number;
+    email: string;
+    role: 'admin' | 'hr' | 'employee';
+    name: string;
+    status: 'active' | 'inactive';
+    must_change_password: number;
+    created_at: string;
+    employee_id?: number;
+    employee_code?: string;
+    department_name?: string;
+  }>>('/api/users'),
+  createHrUser: (data: { name: string; email: string; password?: string }) => request<{
+    success: boolean;
+    message: string;
+    user: any;
+    tempPassword: string;
+  }>('/api/users/hr', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  toggleUserStatus: (id: number, status: 'active' | 'inactive') => request<{
+    success: boolean;
+    user: any;
+    message: string;
+  }>(`/api/users/${id}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  }),
+  resetUserPassword: (id: number) => request<{
+    success: boolean;
+    message: string;
+    tempPassword: string;
+  }>(`/api/users/${id}/reset-password`, {
+    method: 'POST',
+  }),
 };

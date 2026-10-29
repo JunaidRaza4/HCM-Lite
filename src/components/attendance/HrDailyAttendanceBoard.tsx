@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Search, Filter, RefreshCw, CheckCircle2, AlertTriangle, Timer, AlertCircle, Umbrella, Clock } from 'lucide-react';
+import { Calendar, Search, Filter, RefreshCw, CheckCircle2, AlertTriangle, Timer, AlertCircle, Umbrella, Clock, MapPin } from 'lucide-react';
 import { DailyBoardEmployee, Department } from '../../types';
 import { api } from '../../services/api';
 
@@ -195,6 +195,7 @@ export const HrDailyAttendanceBoard: React.FC = () => {
                 <th className="py-3 px-4">Department</th>
                 <th className="py-3 px-4">Check-In Time</th>
                 <th className="py-3 px-4">Check-Out Time</th>
+                <th className="py-3 px-4 text-center">Location Distance</th>
                 <th className="py-3 px-4">Work Hours</th>
                 <th className="py-3 px-4 text-right">Attendance Status</th>
               </tr>
@@ -202,7 +203,7 @@ export const HrDailyAttendanceBoard: React.FC = () => {
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filteredEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-slate-500">
+                  <td colSpan={7} className="py-10 text-center text-slate-500">
                     {loading ? 'Loading attendance board...' : 'No employees registered or matching filter.'}
                   </td>
                 </tr>
@@ -221,6 +222,22 @@ export const HrDailyAttendanceBoard: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap">
                       {formatTime(emp.checkOut)}
+                    </td>
+                    <td className="py-3 px-4 text-center whitespace-nowrap">
+                      {emp.distanceMeters !== null && emp.distanceMeters !== undefined ? (
+                        <div className="group relative inline-flex items-center justify-center">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 cursor-help">
+                            <MapPin className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span>{emp.distanceMeters}m</span>
+                          </span>
+                          {/* Hover Tooltip */}
+                          <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 hidden group-hover:flex items-center z-30 px-2.5 py-1 bg-slate-900 text-white text-[11px] font-medium rounded-lg shadow-lg whitespace-nowrap pointer-events-none">
+                            {emp.distanceMeters}m from office
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 font-mono text-xs">-</span>
+                      )}
                     </td>
                     <td className="py-3 px-4 font-mono font-medium text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
                       {emp.workHours > 0 ? `${emp.workHours} hrs` : '—'}

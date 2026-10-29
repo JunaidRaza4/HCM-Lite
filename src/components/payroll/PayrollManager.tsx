@@ -87,7 +87,7 @@ export const PayrollManager: React.FC = () => {
 
   const handleFinalize = async () => {
     if (!selectedRun) return;
-    if (!confirm(`Are you sure you want to FINALIZE and LOCK the payroll run for ${selectedRun.month}? Once finalized, no edits or re-runs are permitted.`)) {
+    if (!confirm(`Finalize karne ke baad run LOCK ho jayega aur changes nahi ho sakenge. Kya aap ${selectedRun.month} ka payroll finalize karna chahte hain?`)) {
       return;
     }
 

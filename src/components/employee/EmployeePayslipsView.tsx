@@ -104,16 +104,32 @@ export const EmployeePayslipsView: React.FC = () => {
                 </div>
               </div>
 
-              <button
-                onClick={() => {
-                  setSelectedPayslip(ps);
-                  setIsModalOpen(true);
-                }}
-                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>View & Download PDF</span>
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.downloadPayslipPdf(ps.payroll_run_id, ps.employee_id, `Payslip_${ps.employee_code || 'EMP'}_${ps.month}.pdf`);
+                    } catch (err: any) {
+                      alert(err.message || 'Failed to download PDF');
+                    }
+                  }}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download PDF</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setSelectedPayslip(ps);
+                    setIsModalOpen(true);
+                  }}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
+                  title="View Itemized Breakdown"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>

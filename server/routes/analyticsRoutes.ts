@@ -15,6 +15,7 @@ analyticsRouter.get('/hr', authenticate, requireRole('admin', 'hr'), (req: Authe
       departmentId,
       startDate,
       endDate,
+      companyId: req.user?.companyId || undefined,
     });
 
     res.json(data);
@@ -34,6 +35,7 @@ analyticsRouter.get('/admin', authenticate, requireRole('admin'), (req: Authenti
       departmentId,
       startDate,
       endDate,
+      companyId: req.user?.companyId || undefined,
     });
 
     res.json(data);

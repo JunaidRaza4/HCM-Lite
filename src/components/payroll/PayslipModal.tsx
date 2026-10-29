@@ -2,6 +2,7 @@ import React from 'react';
 import { jsPDF } from 'jspdf';
 import { X, Download, DollarSign, Calendar, User, Building, FileText, CheckCircle2 } from 'lucide-react';
 import { Payslip } from '../../types';
+import { api } from '../../services/api';
 
 interface PayslipModalProps {
   payslip: Payslip | null;
@@ -12,7 +13,20 @@ interface PayslipModalProps {
 export const PayslipModal: React.FC<PayslipModalProps> = ({ payslip, isOpen, onClose }) => {
   if (!isOpen || !payslip) return null;
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
+    if (payslip.status === 'finalized' && payslip.payroll_run_id && payslip.employee_id) {
+      try {
+        await api.downloadPayslipPdf(
+          payslip.payroll_run_id,
+          payslip.employee_id,
+          `Payslip_${payslip.employee_code || 'EMP'}_${payslip.month}.pdf`
+        );
+        return;
+      } catch (e) {
+        console.warn('Backend PDF endpoint error, falling back to client jsPDF:', e);
+      }
+    }
+
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',

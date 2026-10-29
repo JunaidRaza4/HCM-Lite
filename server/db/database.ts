@@ -86,6 +86,8 @@ function initSchema(db: Database): void {
       must_change_password INTEGER NOT NULL DEFAULT 0,
       employee_id INTEGER,
       status TEXT NOT NULL DEFAULT 'active',
+      security_question TEXT DEFAULT 'What was the brand or model of your first mobile phone?',
+      security_answer TEXT DEFAULT 'nokia',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -119,6 +121,7 @@ function initSchema(db: Database): void {
       status TEXT NOT NULL DEFAULT 'pending',
       reviewed_by INTEGER,
       reviewed_at TEXT,
+      admin_comment TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY(employee_id) REFERENCES employees(id),
       FOREIGN KEY(leave_type_id) REFERENCES leave_types(id)
@@ -261,21 +264,62 @@ function initSchema(db: Database): void {
   const migrations = [
     `ALTER TABLE companies ADD COLUMN office_lat REAL DEFAULT 24.8607;`,
     `ALTER TABLE companies ADD COLUMN office_lng REAL DEFAULT 67.0011;`,
+    `ALTER TABLE companies ADD COLUMN office_radius INTEGER DEFAULT 150;`,
     `ALTER TABLE companies ADD COLUMN geofence_radius_meters REAL DEFAULT 150;`,
     `ALTER TABLE companies ADD COLUMN geofence_enabled INTEGER DEFAULT 1;`,
+    `UPDATE companies SET office_radius = geofence_radius_meters WHERE office_radius IS NULL;`,
+    `UPDATE companies SET geofence_radius_meters = office_radius WHERE geofence_radius_meters IS NULL;`,
     `ALTER TABLE attendance ADD COLUMN source TEXT DEFAULT 'web';`,
     `ALTER TABLE attendance ADD COLUMN location_lat REAL;`,
     `ALTER TABLE attendance ADD COLUMN location_lng REAL;`,
     `ALTER TABLE attendance ADD COLUMN location_accuracy REAL;`,
     `ALTER TABLE attendance ADD COLUMN distance_meters REAL;`,
+    `ALTER TABLE attendance ADD COLUMN checkin_lat REAL;`,
+    `ALTER TABLE attendance ADD COLUMN checkin_lng REAL;`,
+    `ALTER TABLE attendance ADD COLUMN checkin_accuracy REAL;`,
+    `ALTER TABLE attendance ADD COLUMN checkout_lat REAL;`,
+    `ALTER TABLE attendance ADD COLUMN checkout_lng REAL;`,
+    `ALTER TABLE attendance ADD COLUMN checkout_accuracy REAL;`,
+    `ALTER TABLE attendance ADD COLUMN checkout_distance_meters INTEGER;`,
+    `UPDATE attendance SET checkin_lat = location_lat WHERE checkin_lat IS NULL;`,
+    `UPDATE attendance SET checkin_lng = location_lng WHERE checkin_lng IS NULL;`,
+    `UPDATE attendance SET checkin_accuracy = location_accuracy WHERE checkin_accuracy IS NULL;`,
     `ALTER TABLE attendance ADD COLUMN face_verified INTEGER DEFAULT 0;`,
     `ALTER TABLE attendance ADD COLUMN face_descriptor TEXT;`,
+    `ALTER TABLE employees ADD COLUMN employee_code TEXT;`,
+    `ALTER TABLE employees ADD COLUMN basic REAL;`,
+    `UPDATE employees SET employee_code = code WHERE employee_code IS NULL;`,
+    `UPDATE employees SET basic = basic_salary WHERE basic IS NULL;`,
+    `ALTER TABLE payslips ADD COLUMN net_pay REAL;`,
+    `UPDATE payslips SET net_pay = net_salary WHERE net_pay IS NULL;`,
+    `DROP VIEW IF EXISTS company;`,
+    `CREATE VIEW company AS SELECT * FROM companies;`,
+    `DROP VIEW IF EXISTS holidays;`,
+    `CREATE VIEW holidays AS SELECT * FROM public_holidays;`,
+    `ALTER TABLE leave_requests ADD COLUMN admin_comment TEXT;`,
+    `ALTER TABLE users ADD COLUMN security_question TEXT DEFAULT 'What was the brand or model of your first mobile phone?';`,
+    `ALTER TABLE users ADD COLUMN security_answer TEXT DEFAULT 'nokia';`,
+    `ALTER TABLE attendance ADD COLUMN checkout_face_descriptor TEXT;`,
+    `ALTER TABLE users ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE departments ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE employees ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE leave_types ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE public_holidays ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE attendance ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE payroll_runs ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE payslips ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE announcements ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE notifications ADD COLUMN company_id INTEGER;`,
+    `ALTER TABLE audit_logs ADD COLUMN company_id INTEGER;`,
+    `UPDATE users SET company_id = (SELECT id FROM companies LIMIT 1) WHERE company_id IS NULL AND (SELECT id FROM companies LIMIT 1) IS NOT NULL;`,
+    `UPDATE departments SET company_id = (SELECT id FROM companies LIMIT 1) WHERE company_id IS NULL AND (SELECT id FROM companies LIMIT 1) IS NOT NULL;`,
+    `UPDATE employees SET company_id = (SELECT id FROM companies LIMIT 1) WHERE company_id IS NULL AND (SELECT id FROM companies LIMIT 1) IS NOT NULL;`,
   ];
   for (const m of migrations) {
     try {
       db.run(m);
     } catch (_) {
-      // Column already exists
+      // Column or view already exists
     }
   }
 }

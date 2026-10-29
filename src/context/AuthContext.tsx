@@ -29,10 +29,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const checkSetupStatus = async () => {
     try {
       const res = await api.getSetupStatus();
-      setIsSetupComplete(res.initialized);
-      return res.initialized;
+      const isComplete = res.needsSetup !== undefined ? !res.needsSetup : res.initialized;
+      setIsSetupComplete(isComplete);
+      return isComplete;
     } catch (err) {
       console.error('Failed to check setup status:', err);
+      // In case of error (e.g. empty or unmigrated DB), assume setup needed
+      setIsSetupComplete(false);
       return false;
     }
   };

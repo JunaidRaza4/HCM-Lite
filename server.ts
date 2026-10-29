@@ -35,6 +35,7 @@ async function startServer() {
   app.use('/api', companyRouter);
   app.use('/api/employees', employeeRouter);
   app.use('/api/leaves', leaveRouter);
+  app.use('/api/leave', leaveRouter);
   app.use('/api/audit-logs', auditRouter);
   app.use('/api/attendance', attendanceRouter);
   app.use('/api/payroll', payrollRouter);

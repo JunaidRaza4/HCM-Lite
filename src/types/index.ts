@@ -26,6 +26,7 @@ export interface Company {
   weekend_days: string;
   office_lat?: number;
   office_lng?: number;
+  office_radius?: number;
   geofence_radius_meters?: number;
   geofence_enabled?: number;
   created_at: string;
@@ -97,9 +98,11 @@ export interface LeaveRequest {
   end_date: string;
   days_count: number;
   reason?: string | null;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
   reviewed_by?: number | null;
   reviewer_name?: string | null;
+  reviewed_at?: string | null;
+  admin_comment?: string | null;
   created_at: string;
 }
 
@@ -130,6 +133,13 @@ export interface AttendanceRecord {
   location_lng?: number | null;
   location_accuracy?: number | null;
   distance_meters?: number | null;
+  checkin_lat?: number | null;
+  checkin_lng?: number | null;
+  checkin_accuracy?: number | null;
+  checkout_lat?: number | null;
+  checkout_lng?: number | null;
+  checkout_accuracy?: number | null;
+  checkout_distance_meters?: number | null;
   face_verified?: number;
   created_at: string;
   updated_at: string;
@@ -188,6 +198,11 @@ export interface DailyBoardEmployee {
   workHours: number;
   status: string;
   leaveType?: string | null;
+  distanceMeters?: number | null;
+  checkinLat?: number | null;
+  checkinLng?: number | null;
+  checkinAccuracy?: number | null;
+  source?: string | null;
 }
 
 export interface PayrollRun {
@@ -237,6 +252,7 @@ export interface Payslip {
   annual_tax: number;
   monthly_tax: number;
   net_salary: number;
+  net_pay?: number;
   status: 'draft' | 'finalized';
   created_at: string;
 }

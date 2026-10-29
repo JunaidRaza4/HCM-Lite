@@ -5,6 +5,7 @@ export interface FilterOptions {
   startDate?: string; // YYYY-MM-DD
   endDate?: string;   // YYYY-MM-DD
   departmentId?: number;
+  companyId?: number;
 }
 
 export function computeAttendanceRate(stats: {
@@ -26,14 +27,13 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const currentMonthStr = todayStr.slice(0, 7);
 
-  // Department filter clause
-  const deptClause = filters.departmentId ? 'AND e.department_id = ?' : '';
-  const deptParams = filters.departmentId ? [filters.departmentId] : [];
+  // Department filter clause & Company filter clause
+  const companyClause = filters.companyId ? `AND e.company_id = ${Number(filters.companyId)}` : '';
+  const deptClause = filters.departmentId ? `AND e.department_id = ${Number(filters.departmentId)}` : '';
 
   // 1. Headcount
   const headcountRow = queryOne<{ count: number }>(
-    `SELECT COUNT(*) as count FROM employees e WHERE e.status = 'active' ${deptClause}`,
-    deptParams
+    `SELECT COUNT(*) as count FROM employees e WHERE e.status = 'active' ${companyClause} ${deptClause}`
   );
   const headcount = headcountRow?.count || 0;
 
@@ -42,8 +42,8 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
     `SELECT COUNT(DISTINCT a.employee_id) as count
      FROM attendance a
      JOIN employees e ON a.employee_id = e.id
-     WHERE a.date = ? AND e.status = 'active' ${deptClause}`,
-    [todayStr, ...deptParams]
+     WHERE a.date = ? AND e.status = 'active' ${companyClause} ${deptClause}`,
+    [todayStr]
   );
   const presentToday = presentTodayRow?.count || 0;
 
@@ -51,8 +51,8 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
     `SELECT COUNT(DISTINCT a.employee_id) as count
      FROM attendance a
      JOIN employees e ON a.employee_id = e.id
-     WHERE a.date = ? AND a.status = 'late' AND e.status = 'active' ${deptClause}`,
-    [todayStr, ...deptParams]
+     WHERE a.date = ? AND a.status = 'late' AND e.status = 'active' ${companyClause} ${deptClause}`,
+    [todayStr]
   );
   const lateToday = lateTodayRow?.count || 0;
 
@@ -61,8 +61,8 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
      FROM leave_requests lr
      JOIN employees e ON lr.employee_id = e.id
      WHERE lr.status = 'approved' AND lr.start_date <= ? AND lr.end_date >= ?
-       AND e.status = 'active' ${deptClause}`,
-    [todayStr, todayStr, ...deptParams]
+       AND e.status = 'active' ${companyClause} ${deptClause}`,
+    [todayStr, todayStr]
   );
   const onLeaveToday = onLeaveTodayRow?.count || 0;
 
@@ -71,15 +71,13 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
     `SELECT COUNT(*) as count
      FROM leave_requests lr
      JOIN employees e ON lr.employee_id = e.id
-     WHERE lr.status = 'pending' ${deptClause}`,
-    deptParams
+     WHERE lr.status = 'pending' ${companyClause} ${deptClause}`
   );
   const pendingCorrectionsRow = queryOne<{ count: number }>(
     `SELECT COUNT(*) as count
      FROM attendance_corrections ac
      JOIN employees e ON ac.employee_id = e.id
-     WHERE ac.status = 'pending' ${deptClause}`,
-    deptParams
+     WHERE ac.status = 'pending' ${companyClause} ${deptClause}`
   );
   const pendingApprovals = (pendingLeavesRow?.count || 0) + (pendingCorrectionsRow?.count || 0);
 
@@ -95,7 +93,8 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
     expected: number;
   }> = [];
 
-  const holidays = query<{ date: string }>('SELECT date FROM public_holidays').map((h) => h.date);
+  const holidaySql = filters.companyId ? 'SELECT date FROM public_holidays WHERE company_id = ?' : 'SELECT date FROM public_holidays';
+  const holidays = query<{ date: string }>(holidaySql, filters.companyId ? [filters.companyId] : []).map((h) => h.date);
 
   for (let i = 29; i >= 0; i--) {
     const d = new Date();
@@ -113,16 +112,16 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
     const atts = query<any>(
       `SELECT a.* FROM attendance a
        JOIN employees e ON a.employee_id = e.id
-       WHERE a.date = ? ${deptClause}`,
-      [dateStr, ...deptParams]
+       WHERE a.date = ? ${companyClause} ${deptClause}`,
+      [dateStr]
     );
 
     const onLeave = queryOne<{ count: number }>(
       `SELECT COUNT(DISTINCT lr.employee_id) as count
        FROM leave_requests lr
        JOIN employees e ON lr.employee_id = e.id
-       WHERE lr.status = 'approved' AND lr.start_date <= ? AND lr.end_date >= ? ${deptClause}`,
-      [dateStr, dateStr, ...deptParams]
+       WHERE lr.status = 'approved' AND lr.start_date <= ? AND lr.end_date >= ? ${companyClause} ${deptClause}`,
+      [dateStr, dateStr]
     )?.count || 0;
 
     let present = 0;
@@ -167,7 +166,12 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
   }
 
   // 5. Absenteeism by department: (absent days ÷ expected working days)
-  const departments = query<any>('SELECT * FROM departments ORDER BY name ASC');
+  const departments = query<any>(
+    filters.companyId
+      ? 'SELECT * FROM departments WHERE company_id = ? ORDER BY name ASC'
+      : 'SELECT * FROM departments ORDER BY name ASC',
+    filters.companyId ? [filters.companyId] : []
+  );
   const absenteeismByDept: Array<{
     departmentId: number;
     departmentName: string;
@@ -186,7 +190,7 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
     if (filters.departmentId && dept.id !== filters.departmentId) continue;
 
     const deptEmps = query<any>(
-      `SELECT id FROM employees WHERE department_id = ? AND status = 'active'`,
+      `SELECT id FROM employees WHERE department_id = ? AND status = 'active' ${filters.companyId ? `AND company_id = ${Number(filters.companyId)}` : ''}`,
       [dept.id]
     );
     const expected = deptEmps.length * workingDaysElapsed;
@@ -218,7 +222,10 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
   }
 
   // 6. Leave utilization per type (approved days ÷ quota), per department
-  const leaveTypes = query<any>('SELECT * FROM leave_types ORDER BY name ASC');
+  const leaveTypeSql = filters.companyId
+    ? 'SELECT * FROM leave_types WHERE company_id = ? ORDER BY name ASC'
+    : 'SELECT * FROM leave_types ORDER BY name ASC';
+  const leaveTypes = query<any>(leaveTypeSql, filters.companyId ? [filters.companyId] : []);
   const leaveUtilization: Array<{
     departmentId: number;
     departmentName: string;
@@ -233,7 +240,7 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
   for (const dept of departments) {
     if (filters.departmentId && dept.id !== filters.departmentId) continue;
     const deptEmpsCount = queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM employees WHERE department_id = ? AND status = "active"',
+      `SELECT COUNT(*) as count FROM employees WHERE department_id = ? AND status = 'active' ${filters.companyId ? `AND company_id = ${Number(filters.companyId)}` : ''}`,
       [dept.id]
     )?.count || 0;
 
@@ -243,7 +250,7 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
         `SELECT SUM(lr.days_count) as total
          FROM leave_requests lr
          JOIN employees e ON lr.employee_id = e.id
-         WHERE lr.status = 'approved' AND lr.leave_type_id = ? AND e.department_id = ?`,
+         WHERE lr.status = 'approved' AND lr.leave_type_id = ? AND e.department_id = ? ${companyClause}`,
         [lt.id, dept.id]
       );
       const approvedDays = approvedRow?.total || 0;
@@ -270,11 +277,11 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
      FROM attendance a
      JOIN employees e ON a.employee_id = e.id
      LEFT JOIN departments d ON e.department_id = d.id
-     WHERE a.status = 'late' AND a.date LIKE ? ${deptClause}
+     WHERE a.status = 'late' AND a.date LIKE ? ${companyClause} ${deptClause}
      GROUP BY e.id
      ORDER BY late_count DESC
      LIMIT 5`,
-    [`${currentMonthStr}-%`, ...deptParams]
+    [`${currentMonthStr}-%`]
   );
 
   return {
@@ -293,32 +300,33 @@ export function getHrAnalytics(filters: FilterOptions = {}) {
 }
 
 export function getAdminAnalytics(filters: FilterOptions = {}) {
-  const deptClause = filters.departmentId ? 'AND e.department_id = ?' : '';
-  const deptParams = filters.departmentId ? [filters.departmentId] : [];
+  const companyClause = filters.companyId ? `AND e.company_id = ${Number(filters.companyId)}` : '';
+  const deptClause = filters.departmentId ? `AND e.department_id = ${Number(filters.departmentId)}` : '';
 
   // Headcount
   const headcountRow = queryOne<{ count: number }>(
-    `SELECT COUNT(*) as count FROM employees e WHERE e.status = 'active' ${deptClause}`,
-    deptParams
+    `SELECT COUNT(*) as count FROM employees e WHERE e.status = 'active' ${companyClause} ${deptClause}`
   );
   const headcount = headcountRow?.count || 0;
 
   // Attrition (exits in period ÷ average headcount × 100)
   const totalEmployeesEver = queryOne<{ count: number }>(
-    `SELECT COUNT(*) as count FROM employees e WHERE 1=1 ${deptClause}`,
-    deptParams
+    `SELECT COUNT(*) as count FROM employees e WHERE 1=1 ${companyClause} ${deptClause}`
   )?.count || 1;
   const exitedCount = queryOne<{ count: number }>(
-    `SELECT COUNT(*) as count FROM employees e WHERE e.status != 'active' ${deptClause}`,
-    deptParams
+    `SELECT COUNT(*) as count FROM employees e WHERE e.status != 'active' ${companyClause} ${deptClause}`
   )?.count || 0;
 
   const avgHeadcount = (headcount + (headcount + exitedCount)) / 2 || 1;
   const attritionRate = Math.round((exitedCount / avgHeadcount) * 1000) / 10;
 
   // Payroll cost (sum of gross AND net) & average salary
+  const payrollRunSql = filters.companyId
+    ? `SELECT * FROM payroll_runs WHERE company_id = ? ORDER BY month DESC LIMIT 1`
+    : `SELECT * FROM payroll_runs ORDER BY month DESC LIMIT 1`;
   const latestPayrollRun = queryOne<any>(
-    `SELECT * FROM payroll_runs ORDER BY month DESC LIMIT 1`
+    payrollRunSql,
+    filters.companyId ? [filters.companyId] : []
   );
 
   let totalGross = 0;
@@ -342,8 +350,7 @@ export function getAdminAnalytics(filters: FilterOptions = {}) {
 
   // Average basic/gross salary
   const avgSalRow = queryOne<{ avg_basic: number }>(
-    `SELECT AVG(basic_salary) as avg_basic FROM employees e WHERE e.status = 'active' ${deptClause}`,
-    deptParams
+    `SELECT AVG(basic_salary) as avg_basic FROM employees e WHERE e.status = 'active' ${companyClause} ${deptClause}`
   );
   const averageBasic = avgSalRow?.avg_basic || 0;
   const averageGross = Math.round(averageBasic * 1.5 * 100) / 100;
@@ -353,6 +360,7 @@ export function getAdminAnalytics(filters: FilterOptions = {}) {
     `SELECT d.id as department_id, d.name as department_name, COUNT(e.id) as headcount
      FROM departments d
      LEFT JOIN employees e ON d.id = e.department_id AND e.status = 'active'
+     WHERE 1=1 ${filters.companyId ? `AND d.company_id = ${Number(filters.companyId)}` : ''}
      GROUP BY d.id
      ORDER BY d.name ASC`
   );
@@ -374,7 +382,7 @@ export function getAdminAnalytics(filters: FilterOptions = {}) {
     } else {
       // Estimate from active employee salaries
       const row = queryOne<any>(
-        `SELECT SUM(basic_salary) as sum_basic FROM employees WHERE department_id = ? AND status = 'active'`,
+        `SELECT SUM(basic_salary) as sum_basic FROM employees WHERE department_id = ? AND status = 'active' ${filters.companyId ? `AND company_id = ${Number(filters.companyId)}` : ''}`,
         [dept.department_id]
       );
       deptGross = (row?.sum_basic || 0) * 1.5;
@@ -391,8 +399,12 @@ export function getAdminAnalytics(filters: FilterOptions = {}) {
   });
 
   // Audit feed of recent actions
+  const auditSql = filters.companyId
+    ? `SELECT * FROM audit_logs WHERE company_id = ? ORDER BY id DESC LIMIT 15`
+    : `SELECT * FROM audit_logs ORDER BY id DESC LIMIT 15`;
   const auditFeed = query<any>(
-    `SELECT * FROM audit_logs ORDER BY id DESC LIMIT 15`
+    auditSql,
+    filters.companyId ? [filters.companyId] : []
   );
 
   return {

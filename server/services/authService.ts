@@ -10,6 +10,7 @@ export interface TokenPayload {
   name: string;
   role: 'admin' | 'hr' | 'employee';
   employeeId?: number | null;
+  companyId?: number | null;
   mustChangePassword?: number;
 }
 

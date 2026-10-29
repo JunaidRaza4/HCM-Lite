@@ -30,10 +30,13 @@ export const Navbar: React.FC = () => {
     if (!user) return;
     try {
       const res = await api.getNotifications();
-      setNotifications(res.notifications || []);
-      setUnreadCount(res.unreadCount || 0);
-    } catch (err) {
-      console.error('Failed to load notifications:', err);
+      setNotifications(res?.notifications || []);
+      setUnreadCount(res?.unreadCount || 0);
+    } catch (err: any) {
+      // Gracefully handle background polling network hiccups
+      if (err?.status === 401) {
+        logout();
+      }
     }
   };
 
@@ -69,22 +72,22 @@ export const Navbar: React.FC = () => {
     switch (role) {
       case 'admin':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800">
-            <Shield className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700">
+            <Shield className="w-3 h-3 text-slate-700 dark:text-slate-300" />
             ADMIN
           </span>
         );
       case 'hr':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
             <Users className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
             HR MANAGER
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800">
-            <UserIcon className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-teal-50 text-teal-800 border border-teal-200 dark:bg-teal-950/40 dark:text-teal-300 dark:border-teal-800">
+            <UserIcon className="w-3 h-3 text-teal-600 dark:text-teal-400" />
             EMPLOYEE
           </span>
         );
@@ -183,7 +186,7 @@ export const Navbar: React.FC = () => {
                         <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl z-50 overflow-hidden text-xs animate-in fade-in">
                           <div className="px-4 py-3 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
                             <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                              <Bell className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                              <Bell className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                               Notifications
                               {unreadCount > 0 && (
                                 <span className="text-[10px] bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 font-bold px-1.5 py-0.2 rounded-full">
@@ -194,7 +197,7 @@ export const Navbar: React.FC = () => {
                             {unreadCount > 0 && (
                               <button
                                 onClick={handleMarkAllRead}
-                                className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-semibold cursor-pointer"
+                                className="text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline font-semibold cursor-pointer"
                               >
                                 Mark all as read
                               </button>

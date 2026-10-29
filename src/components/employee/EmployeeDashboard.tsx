@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { User, Building, Calendar, DollarSign, Clock, Umbrella, Plus, Send, CheckCircle2, AlertCircle, RefreshCw, X, CalendarDays, FileEdit, Award, Target, FileText } from 'lucide-react';
+import { User, Building, Calendar, DollarSign, Clock, Umbrella, Plus, Send, CheckCircle2, AlertCircle, RefreshCw, X, CalendarDays, FileEdit, Award, Target, FileText, Download } from 'lucide-react';
 import { LeaveBalance, LeaveRequest, LeaveType, PublicHoliday, EmployeeAnalyticsData } from '../../types';
 import { api } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -93,6 +93,16 @@ export const EmployeeDashboard: React.FC = () => {
     }
   };
 
+  const handleCancelLeave = async (id: number) => {
+    if (!confirm('Are you sure you want to cancel this pending leave request?')) return;
+    try {
+      await api.cancelLeave(id);
+      loadData();
+    } catch (err: any) {
+      alert('Failed to cancel leave request: ' + err.message);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Announcements */}
@@ -134,77 +144,119 @@ export const EmployeeDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Employee Dashboard KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {/* Hours Worked This Week vs 40h target */}
+      {/* Employee Dashboard KPIs (Top 4 Widgets) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* 1. Hours This Week */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-2 transition-colors">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-semibold">Weekly Work Hours</span>
-            <div className="p-2 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-xl">
+            <span className="text-xs font-semibold">Hours This Week</span>
+            <div className="p-2 bg-indigo-50 dark:bg-indigo-950/40 text-[#4F46E5] dark:text-indigo-400 rounded-xl">
               <Target className="w-4 h-4" />
             </div>
           </div>
-          <div className="flex items-baseline justify-between">
-            <span className="text-2xl font-bold font-mono text-slate-900 dark:text-white">
-              {analytics?.hoursWorkedThisWeek ?? 0}h
-            </span>
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">/ 40h Target</span>
-          </div>
-          {/* Visual Progress bar */}
-          <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-            <div
-              style={{ width: `${Math.min(100, (((analytics?.hoursWorkedThisWeek ?? 0) / 40) * 100))}%` }}
-              className="bg-indigo-600 h-full rounded-full transition-all"
-            />
-          </div>
+          {loading ? (
+            <div className="space-y-2 py-1">
+              <div className="h-7 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
+              <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full animate-pulse" />
+            </div>
+          ) : (
+            <>
+              <div className="flex items-baseline justify-between">
+                <span className="text-2xl font-bold font-mono text-slate-900 dark:text-white">
+                  {analytics?.hoursWorkedThisWeek ?? 0}h
+                </span>
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  {analytics?.hoursWorkedThisWeek ?? 0}h / 40h
+                </span>
+              </div>
+              {/* Visual Progress bar */}
+              <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                <div
+                  style={{ width: `${Math.min(100, (((analytics?.hoursWorkedThisWeek ?? 0) / 40) * 100))}%` }}
+                  className="bg-[#4F46E5] h-full rounded-full transition-all"
+                />
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Late count this month */}
+        {/* 2. Late Count */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-1 transition-colors">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-semibold">Late This Month</span>
+            <span className="text-xs font-semibold">Late Count</span>
             <div className="p-2 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-xl">
               <Clock className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono text-amber-600 dark:text-amber-400">
-            {analytics?.lateCountThisMonth ?? 0}
-          </div>
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">After 09:15 cutoff</span>
+          {loading ? (
+            <div className="h-7 w-16 bg-slate-200 dark:bg-slate-800 rounded animate-pulse my-1" />
+          ) : (
+            <div className="text-2xl font-bold font-mono text-amber-600 dark:text-amber-400">
+              {analytics?.lateCountThisMonth ?? 0}
+            </div>
+          )}
+          <span className="text-[11px] text-slate-500 dark:text-slate-400">Arrived after grace cutoff this month</span>
         </div>
 
-        {/* Leave Balance per type */}
+        {/* 3. Leave Balance */}
         <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-1 transition-colors">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-semibold">Available Leave</span>
+            <span className="text-xs font-semibold">Leave Balance</span>
             <div className="p-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-xl">
               <Umbrella className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-            {balances.reduce((acc, b) => acc + b.remaining, 0)} Days
-          </div>
+          {loading ? (
+            <div className="h-7 w-20 bg-slate-200 dark:bg-slate-800 rounded animate-pulse my-1" />
+          ) : (
+            <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
+              {balances.reduce((acc, b) => acc + b.remaining, 0)} left
+            </div>
+          )}
           <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate block">
-            {balances.map((b) => `${b.name.split(' ')[0]}: ${b.remaining}`).join(' • ') || 'Allocated quota'}
+            {balances.length > 0
+              ? balances.map((b) => `${b.name.split(' ')[0]}: ${b.remaining}`).join(' • ')
+              : 'Allocated quota'}
           </span>
         </div>
 
-        {/* Last Payslip Amount */}
-        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-1 transition-colors">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
-            <span className="text-xs font-semibold">Last Payslip</span>
-            <div className="p-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-xl">
-              <DollarSign className="w-4 h-4" />
+        {/* 4. Last Payslip */}
+        <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-1.5 transition-colors flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+              <span className="text-xs font-semibold">Last Payslip</span>
+              <div className="p-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-xl">
+                <DollarSign className="w-4 h-4" />
+              </div>
             </div>
+            {loading ? (
+              <div className="h-7 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse my-1" />
+            ) : (
+              <div className="text-xl font-bold font-mono text-slate-900 dark:text-white truncate">
+                {analytics?.lastPayslip
+                  ? `$${Number(analytics.lastPayslip.net_pay || analytics.lastPayslip.net_salary).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : 'Pending'}
+              </div>
+            )}
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+              {analytics?.lastPayslip ? `Period: ${analytics.lastPayslip.month}` : 'No finalized run yet'}
+            </span>
           </div>
-          <div className="text-xl font-bold font-mono text-slate-900 dark:text-white truncate">
-            {analytics?.lastPayslip
-              ? `$${Number(analytics.lastPayslip.net_salary).toLocaleString()}`
-              : 'Pending'}
-          </div>
-          <span className="text-[11px] text-slate-500 dark:text-slate-400">
-            {analytics?.lastPayslip ? `Net for ${analytics.lastPayslip.month}` : 'No finalized runs yet'}
-          </span>
+
+          {analytics?.lastPayslip && (
+            <button
+              type="button"
+              onClick={() => {
+                const lp = analytics?.lastPayslip;
+                if (!lp) return;
+                api.downloadPayslipPdf(lp.payroll_run_id, lp.employee_id, `Payslip_${lp.month}.pdf`).catch((e) => alert(e.message));
+              }}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-[#4F46E5] hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download PDF</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -298,7 +350,13 @@ export const EmployeeDashboard: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {balances.map((b) => (
+              {balances.length === 0 ? (
+                <div className="col-span-full py-8 text-center bg-white dark:bg-slate-900 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl p-6">
+                  <Umbrella className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">No leave quotas defined by HR yet.</p>
+                </div>
+              ) : (
+                balances.map((b) => (
                 <div
                   key={b.id}
                   className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs"
@@ -323,7 +381,7 @@ export const EmployeeDashboard: React.FC = () => {
                     <span>Pending: <strong className="text-amber-600 dark:text-amber-400 font-mono">{b.pending}d</strong></span>
                   </div>
                 </div>
-              ))}
+              )))}
             </div>
           </div>
 
@@ -361,25 +419,46 @@ export const EmployeeDashboard: React.FC = () => {
                           <td className="py-3 px-4 font-bold text-indigo-600 dark:text-indigo-400 font-mono">
                             {r.days_count}d
                           </td>
-                          <td className="py-3 px-4 max-w-xs truncate text-slate-500 dark:text-slate-400">
-                            {r.reason || '—'}
+                          <td className="py-3 px-4 max-w-xs text-slate-500 dark:text-slate-400">
+                            <div>{r.reason || '—'}</div>
+                            {r.admin_comment && (
+                              <div className="text-[10px] text-indigo-600 dark:text-indigo-400 italic mt-0.5">
+                                HR Note: "{r.admin_comment}"
+                              </div>
+                            )}
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            {r.status === 'approved' && (
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30">
-                                Approved
-                              </span>
-                            )}
-                            {r.status === 'rejected' && (
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30">
-                                Rejected
-                              </span>
-                            )}
-                            {r.status === 'pending' && (
-                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30">
-                                Pending
-                              </span>
-                            )}
+                            <div className="flex items-center justify-end gap-1.5">
+                              {r.status === 'approved' && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30">
+                                  Approved
+                                </span>
+                              )}
+                              {r.status === 'rejected' && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30">
+                                  Rejected
+                                </span>
+                              )}
+                              {r.status === 'cancelled' && (
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-800 dark:text-slate-400">
+                                  Cancelled
+                                </span>
+                              )}
+                              {r.status === 'pending' && (
+                                <>
+                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30">
+                                    Pending
+                                  </span>
+                                  <button
+                                    onClick={() => handleCancelLeave(r.id)}
+                                    className="px-2 py-0.5 text-[11px] font-medium text-rose-600 hover:text-rose-800 dark:text-rose-400 hover:underline cursor-pointer"
+                                    title="Cancel this pending leave request"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -539,17 +618,25 @@ export const EmployeeDashboard: React.FC = () => {
               <form onSubmit={handleApplyLeave} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Leave Category</label>
-                  <select
-                    value={selectedLeaveType}
-                    onChange={(e) => setSelectedLeaveType(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 shadow-2xs"
-                  >
-                    {leaveTypes.map((lt) => (
-                      <option key={lt.id} value={lt.id}>
-                        {lt.name} ({lt.quota_days} days yearly quota)
-                      </option>
-                    ))}
-                  </select>
+                  {leaveTypes.length === 0 ? (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>No leave categories configured by HR yet.</span>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedLeaveType}
+                      onChange={(e) => setSelectedLeaveType(Number(e.target.value))}
+                      className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                    >
+                      <option value="">Select a category...</option>
+                      {leaveTypes.map((lt) => (
+                        <option key={lt.id} value={lt.id}>
+                          {lt.name} ({lt.quota_days} days yearly quota)
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -610,11 +697,11 @@ export const EmployeeDashboard: React.FC = () => {
                   </button>
                   <button
                     type="submit"
-                    disabled={submitting}
-                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
+                    disabled={submitting || leaveTypes.length === 0}
+                    className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    <span>Submit Request</span>
+                    <span>{leaveTypes.length === 0 ? 'No Leave Policies Configured' : 'Submit Request'}</span>
                   </button>
                 </div>
               </form>

@@ -55,16 +55,21 @@ export function logAiCall(params: {
   }
 }
 
-// Service functions matching REST APIs
+// Service functions matching REST APIs with multi-company isolation
 export const aiToolsExecution = {
   get_headcount(user: any, args: { department_id?: number }) {
+    const compId = user.companyId || 1;
     const filter = args.department_id ? 'AND department_id = ' + Number(args.department_id) : '';
-    const row = queryOne<any>(`SELECT COUNT(*) as count FROM employees WHERE status = 'active' ${filter}`);
+    const row = queryOne<any>(
+      `SELECT COUNT(*) as count FROM employees WHERE status = 'active' AND (company_id = ? OR company_id IS NULL) ${filter}`,
+      [compId]
+    );
     return { headcount: row?.count || 0 };
   },
 
   get_attendance_summary(user: any, args: { date?: string; department_id?: number }) {
-    const hrData = getHrAnalytics({ departmentId: args.department_id });
+    const compId = user.companyId || 1;
+    const hrData = getHrAnalytics({ departmentId: args.department_id, companyId: compId });
     return {
       presentToday: hrData.kpis.presentToday,
       lateToday: hrData.kpis.lateToday,
@@ -78,7 +83,8 @@ export const aiToolsExecution = {
     if (user.role === 'employee') {
       return { error: 'Employees can only view their own attendance records.' };
     }
-    const hrData = getHrAnalytics();
+    const compId = user.companyId || 1;
+    const hrData = getHrAnalytics({ companyId: compId });
     return { topLateComers: hrData.topLateComers.slice(0, args.limit || 5) };
   },
 
@@ -86,11 +92,15 @@ export const aiToolsExecution = {
     if (user.role === 'employee') {
       return { error: 'Employees can only view their own leave balances.' };
     }
-    const leaveTypes = query<any>('SELECT * FROM leave_types');
+    const compId = user.companyId || 1;
+    const leaveTypes = query<any>(
+      'SELECT * FROM leave_types WHERE company_id = ? OR company_id IS NULL',
+      [compId]
+    );
     const counts = leaveTypes.map((lt) => {
       const row = queryOne<any>(
-        'SELECT COUNT(*) as req_count, SUM(days_count) as total_days FROM leave_requests WHERE leave_type_id = ? AND status = "approved"',
-        [lt.id]
+        'SELECT COUNT(*) as req_count, SUM(days_count) as total_days FROM leave_requests WHERE leave_type_id = ? AND status = "approved" AND (company_id = ? OR company_id IS NULL)',
+        [lt.id, compId]
       );
       return {
         type: lt.name,
@@ -110,13 +120,14 @@ export const aiToolsExecution = {
   },
 
   get_payroll_summary(user: any, args: { month?: string }) {
+    const compId = user.companyId || 1;
     // SECURITY SCOPE ENFORCEMENT:
     // If employee asks for payroll summary, only return their own latest payslip
     if (user.role === 'employee') {
       if (!user.employeeId) return { error: 'No employee profile linked to current user.' };
       const ps = queryOne<any>(
-        'SELECT month, gross, net_salary, total_deductions, status FROM payslips WHERE employee_id = ? ORDER BY month DESC LIMIT 1',
-        [user.employeeId]
+        'SELECT month, gross, net_salary, total_deductions, status FROM payslips WHERE employee_id = ? AND (company_id = ? OR company_id IS NULL) ORDER BY month DESC LIMIT 1',
+        [user.employeeId, compId]
       );
       return ps
         ? { myLastPayslip: ps }
@@ -125,8 +136,8 @@ export const aiToolsExecution = {
 
     // HR and Admin can see company payroll summary
     const pr = args.month
-      ? queryOne<any>('SELECT * FROM payroll_runs WHERE month = ?', [args.month])
-      : queryOne<any>('SELECT * FROM payroll_runs ORDER BY month DESC LIMIT 1');
+      ? queryOne<any>('SELECT * FROM payroll_runs WHERE month = ? AND (company_id = ? OR company_id IS NULL)', [args.month, compId])
+      : queryOne<any>('SELECT * FROM payroll_runs WHERE company_id = ? OR company_id IS NULL ORDER BY month DESC LIMIT 1', [compId]);
 
     return pr
       ? {
@@ -140,13 +151,14 @@ export const aiToolsExecution = {
   },
 
   search_employees(user: any, args: { query?: string; department_id?: number }) {
+    const compId = user.companyId || 1;
     let sql = `
       SELECT e.id, e.code, e.name, d.name as department, e.designation, e.email
       FROM employees e
       LEFT JOIN departments d ON e.department_id = d.id
-      WHERE e.status = 'active'
+      WHERE e.status = 'active' AND (e.company_id = ? OR e.company_id IS NULL)
     `;
-    const params: any[] = [];
+    const params: any[] = [compId];
     if (args.query) {
       sql += ` AND (e.name LIKE ? OR e.code LIKE ? OR e.designation LIKE ?)`;
       params.push(`%${args.query}%`, `%${args.query}%`, `%${args.query}%`);
@@ -328,82 +340,79 @@ Include a valid JSON block at the bottom of your answer formatted exactly like t
 Calculate valid YYYY-MM-DD dates relative to today's date (${todayStr}).
 `;
 
-  // Timeout promise for 15 seconds
+  // Timeout promise for 24 seconds to support multi-turn reasoning and tool calls
   const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
-    setTimeout(() => resolve({ isTimeout: true }), 14500);
+    setTimeout(() => resolve({ isTimeout: true }), 24000);
   });
+
+  const CANDIDATE_MODELS = ['gemini-3.5-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.8-flash'];
 
   const executionPromise = (async () => {
     try {
       const toolsUsedList: string[] = [];
+      let finalReply = '';
 
-      // Initial call with tools
-      const firstResponse = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: message }],
-          },
-        ],
-        config: {
-          systemInstruction,
-          tools: [{ functionDeclarations: toolDeclarations as any }],
-        },
-      });
-
-      // Handle function calls if any
-      const functionCalls = firstResponse.functionCalls;
-      let finalReply = firstResponse.text || '';
-
-      if (functionCalls && functionCalls.length > 0) {
-        const functionResponsesParts: any[] = [];
-
-        for (const call of functionCalls) {
-          const toolName = call.name || '';
-          if (!toolName) continue;
-          toolsUsedList.push(toolName);
-          const toolHandler = (aiToolsExecution as any)[toolName];
-          let toolResult: any;
-
-          if (toolHandler) {
-            try {
-              toolResult = toolHandler(user, call.args || {});
-            } catch (err: any) {
-              toolResult = { error: err.message };
-            }
-          } else {
-            toolResult = { error: `Tool ${toolName} not found.` };
-          }
-
-          functionResponsesParts.push({
-            functionResponse: {
-              name: call.name,
-              response: { result: toolResult },
+      let lastErr: any = null;
+      for (const model of CANDIDATE_MODELS) {
+        try {
+          const chat = ai.chats.create({
+            model,
+            config: {
+              systemInstruction,
+              tools: [{ functionDeclarations: toolDeclarations as any }],
             },
           });
+
+          let response = await chat.sendMessage({ message });
+          let loopCount = 0;
+
+          while (response.functionCalls && response.functionCalls.length > 0 && loopCount < 3) {
+            loopCount++;
+            const functionResponsesParts: any[] = [];
+            for (const call of response.functionCalls) {
+              const toolName = call.name || '';
+              if (!toolName) continue;
+              if (!toolsUsedList.includes(toolName)) {
+                toolsUsedList.push(toolName);
+              }
+              const toolHandler = (aiToolsExecution as any)[toolName];
+              let toolResult: any;
+
+              if (toolHandler) {
+                try {
+                  toolResult = toolHandler(user, call.args || {});
+                } catch (err: any) {
+                  toolResult = { error: err.message };
+                }
+              } else {
+                toolResult = { error: `Tool ${toolName} not found.` };
+              }
+
+              functionResponsesParts.push({
+                functionResponse: {
+                  name: call.name,
+                  response: toolResult,
+                },
+              });
+            }
+
+            response = await chat.sendMessage({
+              message: functionResponsesParts as any,
+            });
+          }
+
+          finalReply = response.text || '';
+          if (finalReply) {
+            break; // Successfully got response
+          }
+        } catch (err: any) {
+          lastErr = err;
+          console.warn(`Chat model ${model} failed, trying next candidate:`, err?.message || err?.status);
         }
+      }
 
-        // Send tool results back to Gemini for final natural language synthesis
-        const secondResponse = await ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite',
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: message }],
-            },
-            firstResponse.candidates?.[0]?.content as any,
-            {
-              role: 'tool',
-              parts: functionResponsesParts,
-            },
-          ],
-          config: {
-            systemInstruction,
-          },
-        });
-
-        finalReply = secondResponse.text || finalReply;
+      if (!finalReply && lastErr) {
+        throw lastErr;
       }
 
       // Check for Smart Leave JSON extraction in the reply
@@ -414,8 +423,12 @@ Calculate valid YYYY-MM-DD dates relative to today's date (${todayStr}).
           const parsed = JSON.parse(jsonMatch[1]);
           if (parsed.smartLeave) {
             const sl = parsed.smartLeave;
-            // Match leave type from DB
-            const leaveTypes = query<any>('SELECT * FROM leave_types');
+            // Match leave type from DB for user's organization
+            const compId = user.companyId || 1;
+            const leaveTypes = query<any>(
+              'SELECT * FROM leave_types WHERE company_id = ? OR company_id IS NULL',
+              [compId]
+            );
             const matchedType = leaveTypes.find(
               (lt) => lt.name.toLowerCase() === (sl.type || '').toLowerCase()
             ) || leaveTypes[0];
@@ -485,5 +498,6 @@ Calculate valid YYYY-MM-DD dates relative to today's date (${todayStr}).
     reply: raceResult.reply,
     isAiGenerated: true,
     smartLeaveForm: raceResult.smartLeaveForm,
+    toolsUsed: raceResult.toolsUsed,
   };
 }

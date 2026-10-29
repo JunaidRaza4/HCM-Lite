@@ -3,6 +3,7 @@ import { query, queryOne, run, transaction } from '../db/database';
 import { authenticate, requireRole, AuthenticatedRequest } from '../middleware/authMiddleware';
 import { logAudit } from '../services/auditService';
 import { createNotification } from '../services/notificationService';
+import { haversineMeters } from '../services/geoService';
 
 export const attendanceRouter = Router();
 
@@ -63,7 +64,6 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     );
 
     if (existing) {
-      // Return HTTP 409 Conflict as explicitly required!
       res.status(409).json({
         error: 'Attendance record already exists for today. Second check-in is not allowed.',
         checkInTime: existing.check_in,
@@ -72,22 +72,31 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
       return;
     }
 
-    // Retrieve company settings for shift start, grace period, and office geofence
-    const company = queryOne<any>('SELECT * FROM companies LIMIT 1');
+    // Retrieve company settings for shift start, grace period, and office location
+    const compId = user.companyId || 1;
+    const company = queryOne<any>('SELECT * FROM companies WHERE id = ?', [compId]) || queryOne<any>('SELECT * FROM companies LIMIT 1');
     const officeStart = company?.office_start || '09:00';
     const graceMins = Number(company?.grace_period_mins ?? 15);
 
-    const { source, faceDescriptor, location } = req.body || {};
+    const officeLat = company?.office_lat !== null && company?.office_lat !== undefined ? Number(company.office_lat) : null;
+    const officeLng = company?.office_lng !== null && company?.office_lng !== undefined ? Number(company.office_lng) : null;
+    const officeRadius = Number(company?.office_radius ?? company?.geofence_radius_meters ?? 150);
+    const hasOfficeLocation = officeLat !== null && officeLng !== null && !isNaN(officeLat) && !isNaN(officeLng);
+
+    const body = req.body || {};
+    const source = body.source === 'camera' ? 'camera' : 'web';
+    const faceDescriptor = body.faceDescriptor;
+
+    // Accept lat, lng, accuracy from top-level body or nested body.location
+    let inputLat: number | null = body.lat !== undefined ? Number(body.lat) : (body.location?.lat !== undefined ? Number(body.location.lat) : null);
+    let inputLng: number | null = body.lng !== undefined ? Number(body.lng) : (body.location?.lng !== undefined ? Number(body.location.lng) : null);
+    let inputAccuracy: number | null = body.accuracy !== undefined ? Number(body.accuracy) : (body.location?.accuracy !== undefined ? Number(body.location.accuracy) : null);
 
     let distanceMeters: number | null = null;
     let faceVerified = 0;
     let faceDescriptorStr: string | null = null;
-    let locLat: number | null = null;
-    let locLng: number | null = null;
-    let locAccuracy: number | null = null;
 
     if (source === 'camera') {
-      // Check face descriptor: exactly ONE face descriptor array
       if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length < 32) {
         res.status(400).json({
           error: 'Face verification failed: Missing or invalid face descriptor. Exactly one face must be detected.',
@@ -95,61 +104,64 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
         return;
       }
 
-      // Check geolocation presence
-      if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
-        res.status(400).json({
-          error: 'Location verification failed: Geolocation coordinates (lat, lng) are required for camera check-in.',
-        });
-        return;
-      }
-
-      const lat = Number(location.lat);
-      const lng = Number(location.lng);
-      const accuracy = typeof location.accuracy === 'number' ? location.accuracy : 0;
-
-      locLat = lat;
-      locLng = lng;
-      locAccuracy = accuracy;
-
-      // Accuracy check: accuracy > 100m ho to reject
-      if (accuracy > 100) {
-        res.status(400).json({
-          error: `GPS accuracy too low (${Math.round(accuracy)}m). Accuracy must be 100m or better for verified check-in.`,
-          accuracy,
-        });
-        return;
-      }
-
-      // Server Haversine formula calculation against office location
-      const officeLat = Number(company?.office_lat ?? 24.8607);
-      const officeLng = Number(company?.office_lng ?? 67.0011);
-      const maxRadius = Number(company?.geofence_radius_meters ?? 150);
-      const geofenceEnabled = company?.geofence_enabled !== 0;
-
-      distanceMeters = calculateHaversineDistance(lat, lng, officeLat, officeLng);
-
-      // Distance > radius (e.g. 150m) ho to reject
-      if (geofenceEnabled && distanceMeters > maxRadius) {
-        res.status(400).json({
-          error: `Geofence validation failed: You are ${distanceMeters}m away from the office. Check-in is only permitted within ${maxRadius}m.`,
-          distanceMeters,
-          maxRadius,
-          officeLat,
-          officeLng,
+      // Camera check-in requires location
+      if (inputLat === null || inputLng === null || isNaN(inputLat) || isNaN(inputLng)) {
+        res.status(403).json({
+          error: 'Location coordinates (lat, lng) are required for camera check-in.',
         });
         return;
       }
 
       faceVerified = 1;
-      faceDescriptorStr = JSON.stringify(faceDescriptor.slice(0, 32)); // Store compact mathematical vector
+      faceDescriptorStr = JSON.stringify(Array.from(faceDescriptor));
+    }
+
+    // Location enforcement rules
+    if (hasOfficeLocation) {
+      // If office location is set, verify location
+      if (inputLat === null || inputLng === null || isNaN(inputLat) || isNaN(inputLng)) {
+        res.status(403).json({
+          error: 'Location permission chahiye attendance ke liye. Browser settings se allow karein.',
+        });
+        return;
+      }
+
+      // Rule a: accuracy > 100m -> reject HTTP 403
+      if (inputAccuracy !== null && !isNaN(inputAccuracy) && inputAccuracy > 100) {
+        res.status(403).json({
+          error: `GPS accuracy too low (${Math.round(inputAccuracy)}m). Try again outdoors.`,
+          accuracy: inputAccuracy,
+        });
+        return;
+      }
+
+      // Rule b: haversine distance > radius -> reject HTTP 403
+      distanceMeters = haversineMeters(inputLat, inputLng, officeLat!, officeLng!);
+      if (distanceMeters > officeRadius) {
+        res.status(403).json({
+          error: `You are ${distanceMeters}m away from office. Allowed radius: ${officeRadius}m.`,
+          distanceMeters,
+          allowedRadius: officeRadius,
+          officeLat,
+          officeLng,
+        });
+        return;
+      }
+    } else {
+      // Office location not set: if coordinates are passed, calculate distance if feasible
+      if (inputAccuracy !== null && !isNaN(inputAccuracy) && inputAccuracy > 100) {
+        res.status(403).json({
+          error: `GPS accuracy too low (${Math.round(inputAccuracy)}m). Try again outdoors.`,
+          accuracy: inputAccuracy,
+        });
+        return;
+      }
     }
 
     const startMinutes = parseTimeToMinutes(officeStart);
-    const cutoffMinutes = startMinutes + graceMins; // e.g. 09:00 + 15 min = 09:15
-
+    const cutoffMinutes = startMinutes + graceMins;
     const checkInMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // 3. Status rule: late = check-in after office_start + grace (e.g. 09:15)
     const isLate = checkInMinutes > cutoffMinutes;
     const initialStatus = isLate ? 'late' : 'present';
 
@@ -158,20 +170,25 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
       `INSERT INTO attendance (
         employee_id, date, check_in, work_hours, status, source,
         location_lat, location_lng, location_accuracy, distance_meters,
-        face_verified, face_descriptor, created_at, updated_at
-      ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        checkin_lat, checkin_lng, checkin_accuracy,
+        face_verified, face_descriptor, company_id, created_at, updated_at
+      ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         employeeId,
         today,
         checkInIso,
         initialStatus,
-        source === 'camera' ? 'camera' : 'web',
-        locLat,
-        locLng,
-        locAccuracy,
+        source,
+        inputLat,
+        inputLng,
+        inputAccuracy,
         distanceMeters,
+        inputLat,
+        inputLng,
+        inputAccuracy,
         faceVerified,
         faceDescriptorStr,
+        compId,
         checkInIso,
         checkInIso,
       ]
@@ -190,8 +207,9 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
         checkIn: checkInIso,
         status: initialStatus,
         isLate,
-        source: source === 'camera' ? 'camera' : 'web',
+        source,
         distanceMeters,
+        accuracy: inputAccuracy,
         faceVerified,
       },
       ipAddress: req.ip,
@@ -200,15 +218,15 @@ attendanceRouter.post('/check-in', authenticate, (req: AuthenticatedRequest, res
     const record = queryOne('SELECT * FROM attendance WHERE id = ?', [result.lastInsertRowid]);
     res.status(201).json({
       success: true,
-      message: source === 'camera'
-        ? `Camera & Geofence verified! (${distanceMeters !== null ? distanceMeters + 'm from office' : 'Office'}). Marked ${isLate ? 'Late' : 'Present'}.`
+      message: distanceMeters !== null
+        ? `Checked in successfully! (${distanceMeters}m from office). Marked ${isLate ? 'Late' : 'Present'}.`
         : isLate
         ? 'Checked in (marked Late after grace window).'
         : 'Checked in successfully on time!',
       attendance: record,
       distanceMeters,
       faceVerified: !!faceVerified,
-      source: source === 'camera' ? 'camera' : 'web',
+      source,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -243,35 +261,95 @@ attendanceRouter.post('/check-out', authenticate, (req: AuthenticatedRequest, re
       return;
     }
 
-    const { source, faceDescriptor, location } = req.body || {};
+    const body = req.body || {};
+    const source = body.source === 'camera' ? 'camera' : 'web';
+    const checkoutFaceDescriptor = body.faceDescriptor;
+    let checkoutDescriptorStr: string | null = null;
+    let faceVerified = record.face_verified || 0;
 
-    const company = queryOne<any>('SELECT * FROM companies LIMIT 1');
+    // Face Vector Matching on Check-Out (Must match check-in vector)
+    if (source === 'camera' || (record.face_descriptor && record.face_descriptor.length > 10)) {
+      if (!checkoutFaceDescriptor || !Array.isArray(checkoutFaceDescriptor) || checkoutFaceDescriptor.length < 32) {
+        res.status(400).json({
+          error: 'Face verification required for check-out. Exactly one face must be detected in the camera frame.',
+        });
+        return;
+      }
+
+      if (record.face_descriptor) {
+        try {
+          const checkinVector = JSON.parse(record.face_descriptor);
+          // Calculate Euclidean distance between check-in vector and checkout vector
+          let sum = 0;
+          const len = Math.min(checkinVector.length, checkoutFaceDescriptor.length);
+          for (let i = 0; i < len; i++) {
+            const diff = checkinVector[i] - checkoutFaceDescriptor[i];
+            sum += diff * diff;
+          }
+          const distance = Math.sqrt(sum);
+          const threshold = 0.55;
+
+          if (distance > threshold) {
+            res.status(403).json({
+              error: `Face mismatch! Your checkout face does not match your check-in face vector (distance: ${distance.toFixed(2)}, allowed threshold: ${threshold}). Check-out denied.`,
+              distance,
+              threshold,
+            });
+            return;
+          }
+
+          faceVerified = 1;
+          checkoutDescriptorStr = JSON.stringify(Array.from(checkoutFaceDescriptor));
+        } catch (err: any) {
+          console.error('Vector comparison error:', err);
+        }
+      } else {
+        faceVerified = 1;
+        checkoutDescriptorStr = JSON.stringify(Array.from(checkoutFaceDescriptor));
+      }
+    }
+
+    let inputLat: number | null = body.lat !== undefined ? Number(body.lat) : (body.location?.lat !== undefined ? Number(body.location.lat) : null);
+    let inputLng: number | null = body.lng !== undefined ? Number(body.lng) : (body.location?.lng !== undefined ? Number(body.location.lng) : null);
+    let inputAccuracy: number | null = body.accuracy !== undefined ? Number(body.accuracy) : (body.location?.accuracy !== undefined ? Number(body.location.accuracy) : null);
+
+    const compId = user.companyId || 1;
+    const company = queryOne<any>('SELECT * FROM companies WHERE id = ?', [compId]) || queryOne<any>('SELECT * FROM companies LIMIT 1');
+    const officeLat = company?.office_lat !== null && company?.office_lat !== undefined ? Number(company.office_lat) : null;
+    const officeLng = company?.office_lng !== null && company?.office_lng !== undefined ? Number(company.office_lng) : null;
+    const officeRadius = Number(company?.office_radius ?? company?.geofence_radius_meters ?? 150);
+    const hasOfficeLocation = officeLat !== null && officeLng !== null && !isNaN(officeLat) && !isNaN(officeLng);
+
     let outDistance: number | null = null;
-    let outLat: number | null = null;
-    let outLng: number | null = null;
+    if (inputLat !== null && inputLng !== null && !isNaN(inputLat) && !isNaN(inputLng)) {
+      if (inputAccuracy !== null && !isNaN(inputAccuracy) && inputAccuracy > 100) {
+        res.status(403).json({
+          error: `GPS accuracy too low (${Math.round(inputAccuracy)}m). Try again outdoors.`,
+          accuracy: inputAccuracy,
+        });
+        return;
+      }
 
-    if (source === 'camera' && typeof location?.lat === 'number' && typeof location?.lng === 'number') {
-      const lat = Number(location.lat);
-      const lng = Number(location.lng);
-      outLat = lat;
-      outLng = lng;
-      const officeLat = Number(company?.office_lat ?? 24.8607);
-      const officeLng = Number(company?.office_lng ?? 67.0011);
-      outDistance = calculateHaversineDistance(lat, lng, officeLat, officeLng);
+      if (hasOfficeLocation) {
+        outDistance = haversineMeters(inputLat, inputLng, officeLat!, officeLng!);
+        if (outDistance > officeRadius) {
+          res.status(403).json({
+            error: `You are ${outDistance}m away from office. Allowed radius: ${officeRadius}m.`,
+            distanceMeters: outDistance,
+            allowedRadius: officeRadius,
+          });
+          return;
+        }
+      }
     }
 
     const checkInTime = new Date(record.check_in);
     const checkOutTime = now;
     const checkOutIso = checkOutTime.toISOString();
 
-    // Calculate duration in hours
     const durationMs = checkOutTime.getTime() - checkInTime.getTime();
     const workHours = Math.round((durationMs / (1000 * 60 * 60)) * 100) / 100;
 
-    // 3. Status rules:
-    // half_day = worked under 5 hours
-    // late = check-in after grace period and >= 5 hours
-    // present = on-time check-in and >= 5 hours
     let finalStatus = record.status;
     if (workHours < 5) {
       finalStatus = 'half_day';
@@ -283,9 +361,12 @@ attendanceRouter.post('/check-out', authenticate, (req: AuthenticatedRequest, re
 
     run(
       `UPDATE attendance
-       SET check_out = ?, work_hours = ?, status = ?, updated_at = ?
+       SET check_out = ?, work_hours = ?, status = ?,
+           checkout_lat = ?, checkout_lng = ?, checkout_accuracy = ?, checkout_distance_meters = ?,
+           checkout_face_descriptor = ?, face_verified = ?,
+           updated_at = ?
        WHERE id = ?`,
-      [checkOutIso, workHours, finalStatus, checkOutIso, record.id]
+      [checkOutIso, workHours, finalStatus, inputLat, inputLng, inputAccuracy, outDistance, checkoutDescriptorStr, faceVerified, checkOutIso, record.id]
     );
 
     logAudit({
@@ -301,6 +382,8 @@ attendanceRouter.post('/check-out', authenticate, (req: AuthenticatedRequest, re
         checkOut: checkOutIso,
         workHours,
         status: finalStatus,
+        source,
+        distanceMeters: outDistance,
       },
       ipAddress: req.ip,
     });
@@ -308,8 +391,9 @@ attendanceRouter.post('/check-out', authenticate, (req: AuthenticatedRequest, re
     const updated = queryOne('SELECT * FROM attendance WHERE id = ?', [record.id]);
     res.json({
       success: true,
-      message: `Checked out successfully! Total worked: ${workHours} hrs.`,
+      message: `Checked out successfully! Total worked: ${workHours} hrs.${outDistance !== null ? ` (${outDistance}m from office)` : ''}`,
       attendance: updated,
+      distanceMeters: outDistance,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -317,7 +401,7 @@ attendanceRouter.post('/check-out', authenticate, (req: AuthenticatedRequest, re
 });
 
 // ================= 3. GET TODAY'S ATTENDANCE STATUS FOR LOGGED-IN EMPLOYEE =================
-attendanceRouter.get('/today', authenticate, (req: AuthenticatedRequest, res: Response) => {
+const handleGetTodayAttendance = (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     if (!user.employeeId) {
@@ -340,11 +424,14 @@ attendanceRouter.get('/today', authenticate, (req: AuthenticatedRequest, res: Re
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
-});
+};
+
+attendanceRouter.get('/today', authenticate, handleGetTodayAttendance);
+attendanceRouter.get('/my-today', authenticate, handleGetTodayAttendance);
 
 // ================= 4. EMPLOYEE MONTHLY CALENDAR VIEW =================
 // Own records only, monthly, color-coded status
-attendanceRouter.get('/my-monthly', authenticate, (req: AuthenticatedRequest, res: Response) => {
+const handleGetMonthlyAttendance = (req: AuthenticatedRequest, res: Response) => {
   try {
     const user = req.user!;
     if (!user.employeeId) {
@@ -355,7 +442,8 @@ attendanceRouter.get('/my-monthly', authenticate, (req: AuthenticatedRequest, re
     const employeeId = user.employeeId;
     const monthParam = (req.query.month as string) || getLocalDateString(new Date()).slice(0, 7); // e.g. "2026-10"
 
-    const company = queryOne<any>('SELECT * FROM companies LIMIT 1');
+    const compId = user.companyId || 1;
+    const company = queryOne<any>('SELECT * FROM companies WHERE id = ?', [compId]) || queryOne<any>('SELECT * FROM companies LIMIT 1');
     const weekendDays = (company?.weekend_days || 'Saturday,Sunday').split(',').map((d: string) => d.trim().toLowerCase());
 
     // 1. Fetch attendance records for this month
@@ -485,7 +573,10 @@ attendanceRouter.get('/my-monthly', authenticate, (req: AuthenticatedRequest, re
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
-});
+};
+
+attendanceRouter.get('/my-monthly', authenticate, handleGetMonthlyAttendance);
+attendanceRouter.get('/my-month', authenticate, handleGetMonthlyAttendance);
 
 // ================= 5. HR DAILY BOARD =================
 // HR: daily board — all employees, check-in time, status, filter by date and department
@@ -494,21 +585,25 @@ attendanceRouter.get('/daily-board', authenticate, requireRole('admin', 'hr'), (
     const targetDate = (req.query.date as string) || getLocalDateString(new Date());
     const departmentId = req.query.department_id as string;
 
-    const company = queryOne<any>('SELECT * FROM companies LIMIT 1');
+    const compId = req.user?.companyId || 1;
+    const company = queryOne<any>('SELECT * FROM companies WHERE id = ?', [compId]) || queryOne<any>('SELECT * FROM companies LIMIT 1');
     const weekendDays = (company?.weekend_days || 'Saturday,Sunday').split(',').map((d: string) => d.trim().toLowerCase());
 
     const targetDateObj = new Date(targetDate + 'T12:00:00Z');
     const isWeekend = weekendDays.includes(getDayName(targetDateObj).toLowerCase());
-    const holiday = queryOne<any>('SELECT * FROM public_holidays WHERE date = ?', [targetDate]);
+    const holiday = queryOne<any>(
+      'SELECT * FROM public_holidays WHERE date = ? AND (company_id = ? OR company_id IS NULL)',
+      [targetDate, compId]
+    );
 
-    // Query active employees
+    // Query active employees for this organization
     let empSql = `
       SELECT e.id, e.code, e.name, e.email, e.department_id, e.designation, d.name as department_name
       FROM employees e
       LEFT JOIN departments d ON e.department_id = d.id
-      WHERE e.status = 'active'
+      WHERE e.status = 'active' AND (e.company_id = ? OR e.company_id IS NULL)
     `;
-    const empParams: any[] = [];
+    const empParams: any[] = [compId];
     if (departmentId) {
       empSql += ` AND e.department_id = ?`;
       empParams.push(Number(departmentId));
@@ -581,12 +676,16 @@ attendanceRouter.get('/daily-board', authenticate, requireRole('admin', 'hr'), (
         email: emp.email,
         departmentId: emp.department_id,
         departmentName: emp.department_name || 'General Staff',
-        designation: emp.designation,
         checkIn,
         checkOut,
         workHours,
         status,
         leaveType,
+        distanceMeters: att ? (att.distance_meters ?? null) : null,
+        checkinLat: att ? (att.checkin_lat ?? att.location_lat ?? null) : null,
+        checkinLng: att ? (att.checkin_lng ?? att.location_lng ?? null) : null,
+        checkinAccuracy: att ? (att.checkin_accuracy ?? att.location_accuracy ?? null) : null,
+        source: att ? att.source : null,
       };
     });
 

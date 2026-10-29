@@ -14,6 +14,8 @@ import {
   Camera,
   MapPin,
   ShieldCheck,
+  X,
+  Navigation,
 } from 'lucide-react';
 import { AttendanceRecord, Company } from '../../types';
 import { api } from '../../services/api';
@@ -37,6 +39,9 @@ export const AttendancePunchCard: React.FC<AttendancePunchCardProps> = ({
     text: string;
     type: 'success' | 'error' | 'warning' | 'conflict';
   } | null>(null);
+
+  // Friendly location permission modal state
+  const [showLocationModal, setShowLocationModal] = useState(false);
 
   // Live clock
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -92,24 +97,32 @@ export const AttendancePunchCard: React.FC<AttendancePunchCardProps> = ({
     }
   }, [checkedIn, checkedOut, todayRecord]);
 
-  const handleStandardCheckIn = async () => {
+  const performWebCheckIn = async (coords?: { lat: number; lng: number; accuracy: number }) => {
     setLoading(true);
     setMessage(null);
     try {
-      const res = await api.checkIn();
+      const res = await api.checkIn({
+        source: 'web',
+        lat: coords?.lat,
+        lng: coords?.lng,
+        accuracy: coords?.accuracy,
+      });
       setCheckedIn(true);
       setCheckedOut(false);
       setTodayRecord(res.attendance);
 
       const status = res.attendance.status;
+      const dist = res.distanceMeters ?? res.attendance.distance_meters;
+      const distBadge = dist !== null && dist !== undefined ? ` (✓ ${dist}m from office)` : '';
+
       if (status === 'late') {
         setMessage({
-          text: 'Checked in successfully! Marked as "Late" (arrived after 09:15 cutoff).',
+          text: `Checked in successfully! Marked as "Late"${distBadge}.`,
           type: 'warning',
         });
       } else {
         setMessage({
-          text: 'Checked in successfully on time! Status marked as "Present".',
+          text: `Checked in successfully on time! Status marked as "Present"${distBadge}.`,
           type: 'success',
         });
       }
@@ -126,18 +139,51 @@ export const AttendancePunchCard: React.FC<AttendancePunchCardProps> = ({
     }
   };
 
-  const handleStandardCheckOut = async () => {
+  const handleStandardCheckIn = () => {
+    setMessage(null);
+    if (!navigator.geolocation) {
+      // Browser doesn't support geolocation, attempt directly
+      performWebCheckIn();
+      return;
+    }
+
+    setLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        performWebCheckIn({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        });
+      },
+      (err) => {
+        setLoading(false);
+        // Show friendly modal on permission denied / error
+        setShowLocationModal(true);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const performWebCheckOut = async (coords?: { lat: number; lng: number; accuracy: number }) => {
     setLoading(true);
     setMessage(null);
     try {
-      const res = await api.checkOut();
+      const res = await api.checkOut({
+        source: 'web',
+        lat: coords?.lat,
+        lng: coords?.lng,
+        accuracy: coords?.accuracy,
+      });
       setCheckedOut(true);
       setTodayRecord(res.attendance);
 
       const hours = res.attendance.work_hours || 0;
       const status = res.attendance.status;
+      const dist = res.distanceMeters ?? res.attendance.checkout_distance_meters;
+      const distBadge = dist !== null && dist !== undefined ? ` (✓ ${dist}m from office)` : '';
 
-      let detailMsg = `Checked out successfully! Total worked: ${hours} hrs.`;
+      let detailMsg = `Checked out successfully! Total worked: ${hours} hrs${distBadge}.`;
       if (status === 'half_day') {
         detailMsg += ' Status marked as "Half Day" (worked under 5 hours).';
       } else if (status === 'late') {
@@ -157,6 +203,30 @@ export const AttendancePunchCard: React.FC<AttendancePunchCardProps> = ({
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleStandardCheckOut = () => {
+    setMessage(null);
+    if (!navigator.geolocation) {
+      performWebCheckOut();
+      return;
+    }
+
+    setLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        performWebCheckOut({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        });
+      },
+      () => {
+        // Fallback without location if permission unavailable on checkout
+        performWebCheckOut();
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
   };
 
   const openCameraModal = (mode: 'check-in' | 'check-out') => {
@@ -249,7 +319,13 @@ export const AttendancePunchCard: React.FC<AttendancePunchCardProps> = ({
               {todayRecord?.source === 'camera' && (
                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3" />
-                  <span>Face & Geofence Verified</span>
+                  <span>Face Verified</span>
+                </span>
+              )}
+              {todayRecord?.distance_meters !== null && todayRecord?.distance_meters !== undefined && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40 flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-emerald-600" />
+                  <span>✓ {todayRecord.distance_meters}m from office</span>
                 </span>
               )}
             </div>
@@ -561,6 +637,63 @@ export const AttendancePunchCard: React.FC<AttendancePunchCardProps> = ({
           if (onAttendanceUpdated) onAttendanceUpdated();
         }}
       />
+
+      {/* Friendly Location Permission Modal */}
+      {showLocationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-xl border border-amber-200 dark:border-amber-900/60">
+                  <MapPin className="w-5 h-5" />
+                </div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Location Permission Required
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLocationModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Location permission chahiye attendance ke liye. Browser settings se allow karein.
+            </p>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400">
+              Company policy requires verified office location distance. Agar GPS blocked hai to browser address bar ke lock icon se Location access enable karein.
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLocationModal(false);
+                  performWebCheckIn();
+                }}
+                className="flex-1 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl border border-slate-300 dark:border-slate-700 transition-colors cursor-pointer text-center"
+              >
+                Try Web Check-in without camera
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLocationModal(false);
+                  handleStandardCheckIn();
+                }}
+                className="px-5 py-2.5 bg-[#4F46E5] hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer text-center"
+              >
+                Retry Location
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
